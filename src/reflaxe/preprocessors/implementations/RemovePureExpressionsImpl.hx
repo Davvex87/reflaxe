@@ -84,7 +84,7 @@ private class PurityState {
 
 		final params = mt.params;
 		if(params == null || params.length == 0) {
-			return MaybePure;
+			return Pure;
 		}
 
 		return switch(params[0].expr) {
@@ -202,20 +202,20 @@ private class OptimizerTexpr {
 			case TCast(_, m) if(m != null): {
 				return true;
 			}
-			case TArray(_), TEnumParameter(_), TEnumIndex(_),
-				TCast(_, null), TBinop(_, _, _), TUnop(_, _, _),
-				TParenthesis(_), TMeta(_), TWhile(_),
-				TField(_, _), TIf(_), TTry(_),
-				TSwitch(_), TArrayDecl(_), TBlock(_),
-				TObjectDecl(_), TVar(_):
+case TArray(_), TEnumParameter(_), TEnumIndex(_),
+			TCast(_, null), TBinop(_, _, _), TUnop(_, _, _),
+			TParenthesis(_), TMeta(_), TWhile(_),
+			TField(_, _), TIf(_), TTry(_),
+			TSwitch(_), TArrayDecl(_), TBlock(_),
+			TObjectDecl(_), TVar(_):
 			{
-				var isPure = true;
+				var hasEffect = false;
 				TypedExprTools.iter(expr, function(subExpr) {
 					if(hasSideEffects(subExpr)) {
-						isPure = false;
+						hasEffect = true;
 					}
 				});
-				return isPure;
+				return hasEffect;
 			}
 			case _: {
 				return false;
@@ -254,8 +254,8 @@ private class OptimizerTexpr {
 			case TFunction(_), TConst(_), TTypeExpr(_): {
 				return blockElement(acc, tail);
 			}
-			case TMeta(meta, _) if(PurityState.getPurityFromMeta(meta) == Pure): {
-				return blockElement(acc, tail);
+			case TMeta(meta, _) if(PurityState.getPurityFromMeta(meta) == Impure): {
+				return blockElement([head].concat(acc), tail);
 			}
 			case TIf({ expr: TConst(TBool(t)) }, e1, e2): {
 				if(t) {
@@ -275,6 +275,9 @@ private class OptimizerTexpr {
 					return blockElement([head].concat(acc), tail);
 				}
 			}
+			case TField(_, fa) if(PurityState.isPureFieldAccess(fa)): {
+				return blockElement(acc, tail);
+			}
 			case TParenthesis(e1), TMeta(_, e1), TCast(e1, null), TField(e1, _), TUnop(_, _, e1), TEnumIndex(e1), TEnumParameter(e1, _, _): {
 				return blockElement(acc, [e1].concat(tail));
 			}
@@ -285,6 +288,19 @@ private class OptimizerTexpr {
 				return blockElement(acc, el1.concat(tail));
 			}
 			case TCall({ expr: TField(_, FEnum(_)) }, el1): {
+				return blockElement(acc, el1.concat(tail));
+			}
+			case TCall({ expr: TField(e1, fa) }, el1) if(PurityState.isPureFieldAccess(fa) && !hasSideEffects(e1)): {
+				var hasEff = false;
+				for(arg in el1) {
+					if(hasSideEffects(arg)) {
+						hasEff = true;
+						break;
+					}
+				}
+				if(hasEff) {
+					return blockElement([head].concat(acc), tail);
+				}
 				return blockElement(acc, el1.concat(tail));
 			}
 			case TObjectDecl(fl): {
